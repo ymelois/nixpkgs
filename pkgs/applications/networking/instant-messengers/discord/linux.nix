@@ -74,6 +74,8 @@
   # The intended use-case for this is when SKIP_HOST_UPDATE is enabled via other means,
   # for example if a settings.json is linked declaratively (e.g., with home-manager).
   disableUpdates ? true,
+  # Make disabling the Chromium sandbox opt-in; recent Electron no longer needs this.
+  disableChromiumSandbox ? false,
   commandLineArgs ? "",
 }:
 
@@ -196,6 +198,7 @@ stdenv.mkDerivation (finalAttrs: {
           --add-flags "\''${NIXOS_SPEECH:+--enable-speech-dispatcher}" \
         ''} \
         ${lib.strings.optionalString enableAutoscroll "--add-flags \"--enable-blink-features=MiddleClickAutoscroll\""} \
+        ${lib.strings.optionalString disableChromiumSandbox "--add-flags \"--no-sandbox --disable-gpu-sandbox\""} \
         --prefix XDG_DATA_DIRS : "${gtk3}/share/gsettings-schemas/${gtk3.name}/" \
         --prefix LD_LIBRARY_PATH : ${finalAttrs.libPath}:$out/opt/${binaryName} \
         ${lib.strings.optionalString disableUpdates "--run ${lib.getExe disableBreakingUpdates}"} \
