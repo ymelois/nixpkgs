@@ -6,12 +6,10 @@
   binaryName,
   desktopName,
   self,
-  autoPatchelfHook,
+  buildFHSEnv,
   makeDesktopItem,
   lib,
   stdenv,
-  wrapGAppsHook3,
-  makeShellWrapper,
   alsa-lib,
   at-spi2-atk,
   at-spi2-core,
@@ -26,6 +24,7 @@
   glib,
   gtk3,
   libcxx,
+  glibc,
   libdrm,
   libglvnd,
   libnotify,
@@ -54,6 +53,8 @@
   libdbusmenu,
   writeScript,
   pipewire,
+  libxkbcommon,
+  mesa,
   python3,
   runCommand,
   libunity,
@@ -144,121 +145,115 @@ let
       runHook postInstall
     '';
   };
-in
-assert lib.assertMsg (
-  enabledDiscordModsCount <= 1
-) "discord: Only one of Vencord, Equicord or Moonlight can be enabled at the same time";
-stdenv.mkDerivation (finalAttrs: {
-  inherit
-    pname
-    version
-    src
-    meta
-    ;
 
-  nativeBuildInputs = [
-    alsa-lib
-    autoPatchelfHook
-    cups
-    libdrm
-    libuuid
-    libXdamage
-    libX11
-    libXScrnSaver
-    libXtst
-    libxcb
-    libxshmfence
-    libgbm
-    nss
-    wrapGAppsHook3
-    makeShellWrapper
-  ];
+  fhsEnv = buildFHSEnv {
+    name = "${pname}-fhs";
 
-  dontWrapGApps = true;
+    targetPkgs =
+      pkgs:
+      [
+        libcxx
+        glibc
+        systemdLibs
+        libpulseaudio
+        libdrm
+        libgbm
+        stdenv.cc.cc.lib
+        alsa-lib
+        atk
+        at-spi2-atk
+        at-spi2-core
+        cairo
+        cups
+        dbus
+        expat
+        fontconfig
+        freetype
+        gdk-pixbuf
+        glib
+        gtk3
+        libglvnd
+        libnotify
+        libX11
+        libXcomposite
+        libXcursor
+        libXdamage
+        libXext
+        libXfixes
+        libXi
+        libXrandr
+        libXrender
+        libXtst
+        libXScrnSaver
+        libxcb
+        libxshmfence
+        libuuid
+        libva
+        nspr
+        nss
+        pango
+        pipewire
+        libxkbcommon
+        mesa
+        libappindicator-gtk3
+        libdbusmenu
+        libunity
+        wayland
+      ]
+      ++ lib.optionals withTTS [ speechd-minimal ];
 
-  libPath = lib.makeLibraryPath (
-    [
-      libcxx
-      systemdLibs
-      libpulseaudio
-      libdrm
-      libgbm
-      stdenv.cc.cc
+    multiPkgs = pkgs: [
       alsa-lib
-      atk
-      at-spi2-atk
-      at-spi2-core
-      cairo
-      cups
-      dbus
-      expat
-      fontconfig
-      freetype
-      gdk-pixbuf
-      glib
-      gtk3
-      libglvnd
-      libnotify
-      libX11
-      libXcomposite
-      libunity
-      libuuid
-      libva
-      libXcursor
-      libXdamage
-      libXext
-      libXfixes
-      libXi
-      libXrandr
-      libXrender
-      libXtst
-      nspr
-      libxcb
-      pango
-      pipewire
-      libXScrnSaver
-      libappindicator-gtk3
-      libdbusmenu
-      wayland
-    ]
-    ++ lib.optionals withTTS [ speechd-minimal ]
-  );
+      libpulseaudio
+    ];
 
-  installPhase = ''
-    runHook preInstall
+    runScript = writeScript "${pname}-wrapper" ''
+      #!${stdenv.shell}
+      set -euo pipefail
 
-    mkdir -p $out/{bin,opt/${binaryName},share/pixmaps,share/icons/hicolor/256x256/apps}
-    cp -a ${discordDir}/opt/${binaryName}/. $out/opt/${binaryName}
+      ${lib.optionalString disableUpdates ''
+        ${lib.getExe disableBreakingUpdates}
+      ''}
 
-    chmod +x $out/opt/${binaryName}/${binaryName}
-    patchelf --set-interpreter ${stdenv.cc.bintools.dynamicLinker} \
-        $out/opt/${binaryName}/${binaryName}
+      if [[ -n "''${XDG_DATA_DIRS:-}" ]]; then
+        export XDG_DATA_DIRS="${gtk3}/share/gsettings-schemas/${gtk3.name}/:''${XDG_DATA_DIRS}"
+      else
+        export XDG_DATA_DIRS="${gtk3}/share/gsettings-schemas/${gtk3.name}/"
+      fi
 
-    wrapProgramShell $out/opt/${binaryName}/${binaryName} \
-        "''${gappsWrapperArgs[@]}" \
-        --add-flags "\''${NIXOS_OZONE_WL:+\''${WAYLAND_DISPLAY:+--ozone-platform=wayland --enable-features=WaylandWindowDecorations --enable-wayland-ime=true}}" \
-        ${lib.strings.optionalString withTTS ''
-          --run 'if [[ "''${NIXOS_SPEECH:-default}" != "False" ]]; then NIXOS_SPEECH=True; else unset NIXOS_SPEECH; fi' \
-          --add-flags "\''${NIXOS_SPEECH:+--enable-speech-dispatcher}" \
-        ''} \
-        ${lib.strings.optionalString enableAutoscroll "--add-flags \"--enable-blink-features=MiddleClickAutoscroll\""} \
-        ${lib.strings.optionalString disableChromiumSandbox "--add-flags \"--no-sandbox --disable-gpu-sandbox\""} \
-        --prefix XDG_DATA_DIRS : "${gtk3}/share/gsettings-schemas/${gtk3.name}/" \
-        --prefix LD_LIBRARY_PATH : ${finalAttrs.libPath}:$out/opt/${binaryName} \
-        ${lib.strings.optionalString disableUpdates "--run ${lib.getExe disableBreakingUpdates}"} \
-        --add-flags ${lib.escapeShellArg commandLineArgs}
+      extraArgs=()
+      if [[ -n "''${NIXOS_OZONE_WL:-}" && -n "''${WAYLAND_DISPLAY:-}" ]]; then
+        extraArgs+=(--ozone-platform=wayland --enable-features=WaylandWindowDecorations --enable-wayland-ime=true)
+      fi
 
-    ln -s $out/opt/${binaryName}/${binaryName} $out/bin/
-    # Without || true the install would fail on case-insensitive filesystems
-    ln -s $out/opt/${binaryName}/${binaryName} $out/bin/${lib.strings.toLower binaryName} || true
+      ${lib.optionalString enableAutoscroll ''
+        extraArgs+=(--enable-blink-features=MiddleClickAutoscroll)
+      ''}
 
-    ln -s $out/opt/${binaryName}/discord.png $out/share/pixmaps/${pname}.png
-    ln -s $out/opt/${binaryName}/discord.png $out/share/icons/hicolor/256x256/apps/${pname}.png
+      ${lib.optionalString disableChromiumSandbox ''
+        extraArgs+=(--no-sandbox --disable-gpu-sandbox)
+      ''}
 
-    ln -s "$desktopItem/share/applications" $out/share/
+      ${lib.optionalString withTTS ''
+        if [[ "''${NIXOS_SPEECH:-default}" != "False" ]]; then
+          export NIXOS_SPEECH=True
+          extraArgs+=(--enable-speech-dispatcher)
+        else
+          unset NIXOS_SPEECH
+        fi
+      ''}
 
-    runHook postInstall
-  '';
+      cmd=(
+        ${discordDir}/opt/${binaryName}/${binaryName}
+      )
+      cmd+=("''${extraArgs[@]}")
+      ${lib.optionalString (commandLineArgs != "") ''
+        cmd+=(${lib.escapeShellArg commandLineArgs})
+      ''}
+
+      exec "''${cmd[@]}" "$@"
+    '';
+  };
 
   desktopItem = makeDesktopItem {
     name = pname;
@@ -273,6 +268,40 @@ stdenv.mkDerivation (finalAttrs: {
     mimeTypes = [ "x-scheme-handler/discord" ];
     startupWMClass = "discord";
   };
+in
+assert lib.assertMsg (
+  enabledDiscordModsCount <= 1
+) "discord: Only one of Vencord, Equicord or Moonlight can be enabled at the same time";
+stdenv.mkDerivation {
+  inherit
+    pname
+    version
+    meta
+    ;
+
+  dontUnpack = true;
+  dontBuild = true;
+  dontConfigure = true;
+
+  installPhase = ''
+    runHook preInstall
+
+    mkdir -p $out/bin
+    mkdir -p $out/share/applications
+    mkdir -p $out/share/pixmaps
+    mkdir -p $out/share/icons/hicolor/256x256/apps
+
+    ln -s ${fhsEnv}/bin/${pname}-fhs $out/bin/${binaryName}
+    # Without || true the install would fail on case-insensitive filesystems
+    ln -s ${fhsEnv}/bin/${pname}-fhs $out/bin/${lib.strings.toLower binaryName} || true
+
+    ln -s ${discordDir}/opt/${binaryName}/discord.png $out/share/pixmaps/${pname}.png
+    ln -s ${discordDir}/opt/${binaryName}/discord.png $out/share/icons/hicolor/256x256/apps/${pname}.png
+
+    ln -s ${desktopItem}/share/applications/${pname}.desktop $out/share/applications/
+
+    runHook postInstall
+  '';
 
   passthru = {
     # make it possible to run disableBreakingUpdates standalone
@@ -301,4 +330,4 @@ stdenv.mkDerivation (finalAttrs: {
       };
     };
   };
-})
+}
