@@ -100,6 +100,50 @@ let
         substituteAllInPlace $out/bin/disable-breaking-updates.py
         chmod +x $out/bin/disable-breaking-updates.py
       '';
+
+  discordDir = stdenv.mkDerivation {
+    name = "${pname}-${version}-dir";
+    inherit src;
+
+    dontPatchELF = true;
+    dontStrip = true;
+    dontPatchShebangs = true;
+
+    dontBuild = true;
+    dontConfigure = true;
+
+    installPhase = ''
+      runHook preInstall
+
+      mkdir -p $out/opt/${binaryName}
+      cp -a ./. $out/opt/${binaryName}
+      cd $out/opt/${binaryName}
+
+      ${lib.optionalString withOpenASAR ''
+        cp -f ${openasar} resources/app.asar
+      ''}
+      ${lib.optionalString withVencord ''
+        mv resources/app.asar resources/_app.asar
+        mkdir resources/app.asar
+        echo '{"name":"discord","main":"index.js"}' > resources/app.asar/package.json
+        echo 'require("${vencord}/patcher.js")' > resources/app.asar/index.js
+      ''}
+      ${lib.optionalString withEquicord ''
+        mv resources/app.asar resources/_app.asar
+        mkdir resources/app.asar
+        echo '{"name":"discord","main":"index.js"}' > resources/app.asar/package.json
+        echo 'require("${equicord}/desktop/patcher.js")' > resources/app.asar/index.js
+      ''}
+      ${lib.optionalString withMoonlight ''
+        mv resources/app.asar resources/_app.asar
+        mkdir resources/app
+        echo '{"name":"discord","main":"injector.js","private": true}' > resources/app/package.json
+        echo 'require("${moonlight}/injector.js").inject(require("path").join(__dirname, "../_app.asar"));' > resources/app/injector.js
+      ''}
+
+      runHook postInstall
+    '';
+  };
 in
 assert lib.assertMsg (
   enabledDiscordModsCount <= 1
@@ -184,7 +228,7 @@ stdenv.mkDerivation (finalAttrs: {
     runHook preInstall
 
     mkdir -p $out/{bin,opt/${binaryName},share/pixmaps,share/icons/hicolor/256x256/apps}
-    mv * $out/opt/${binaryName}
+    cp -a ${discordDir}/opt/${binaryName}/. $out/opt/${binaryName}
 
     chmod +x $out/opt/${binaryName}/${binaryName}
     patchelf --set-interpreter ${stdenv.cc.bintools.dynamicLinker} \
@@ -215,29 +259,6 @@ stdenv.mkDerivation (finalAttrs: {
 
     runHook postInstall
   '';
-
-  postInstall =
-    lib.strings.optionalString withOpenASAR ''
-      cp -f ${openasar} $out/opt/${binaryName}/resources/app.asar
-    ''
-    + lib.strings.optionalString withVencord ''
-      mv $out/opt/${binaryName}/resources/app.asar $out/opt/${binaryName}/resources/_app.asar
-      mkdir $out/opt/${binaryName}/resources/app.asar
-      echo '{"name":"discord","main":"index.js"}' > $out/opt/${binaryName}/resources/app.asar/package.json
-      echo 'require("${vencord}/patcher.js")' > $out/opt/${binaryName}/resources/app.asar/index.js
-    ''
-    + lib.strings.optionalString withEquicord ''
-      mv $out/opt/${binaryName}/resources/app.asar $out/opt/${binaryName}/resources/_app.asar
-      mkdir $out/opt/${binaryName}/resources/app.asar
-      echo '{"name":"discord","main":"index.js"}' > $out/opt/${binaryName}/resources/app.asar/package.json
-      echo 'require("${equicord}/desktop/patcher.js")' > $out/opt/${binaryName}/resources/app.asar/index.js
-    ''
-    + lib.strings.optionalString withMoonlight ''
-      mv $out/opt/${binaryName}/resources/app.asar $out/opt/${binaryName}/resources/_app.asar
-      mkdir $out/opt/${binaryName}/resources/app
-      echo '{"name":"discord","main":"injector.js","private": true}' > $out/opt/${binaryName}/resources/app/package.json
-      echo 'require("${moonlight}/injector.js").inject(require("path").join(__dirname, "../_app.asar"));' > $out/opt/${binaryName}/resources/app/injector.js
-    '';
 
   desktopItem = makeDesktopItem {
     name = pname;
